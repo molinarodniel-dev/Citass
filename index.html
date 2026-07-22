@@ -777,26 +777,37 @@ function submitBooking(){
     createdAt: new Date().toISOString()
   };
 
-  if(isFirebaseActive && bookingsRef){
-    bookingsRef.push(newBooking).then(function(){
-      showConfirmation();
-    }).catch(function(err){
-      newBooking.id = 'local_' + Date.now();
-      bookings.push(newBooking);
-      saveBookingsLocal();
-      renderSlots();
-      renderBookingsTable();
-      showConfirmation();
-    });
-  } else {
-    newBooking.id = 'local_' + Date.now();
-    bookings.push(newBooking);
-    saveBookingsLocal();
-    renderSlots();
-    renderBookingsTable();
-    showConfirmation();
-  }
-}
+          // Guardar en Firebase / LocalStorage
+        if(isFirebaseActive && bookingsRef) {
+          var newRef = bookingsRef.push();
+          newRef.set(newBooking);
+        } else {
+          newBooking.id = 'local_' + Date.now();
+          bookings.push(newBooking);
+          saveBookingsLocal();
+          renderSlots();
+          renderBookingsTable();
+        }
+
+        showConfirmation();
+
+        // Crear el mensaje formateado para WhatsApp
+        var textMsg = "💈 *Nueva Reserva — Barbería JR*\n\n" +
+                      "👤 *Cliente:* " + state.name + "\n" +
+                      "📞 *Teléfono:* " + state.phone + "\n" +
+                      "✂️ *Servicio:* " + state.service.name + " (" + state.service.price + ")\n" +
+                      "👤 *Barbero:* " + state.barber.name + "\n" +
+                      "📅 *Fecha:* " + selectedDate.dayLabel + " " + selectedDate.dayNum + " " + selectedDate.monthLabel + "\n" +
+                      "⏰ *Hora:* " + formatTime12h(state.slot) + "\n" +
+                      "💳 *Pago:* " + state.payment.name + (state.reference ? " (Ref: " + state.reference + ")" : "");
+
+        var waUrl = "https://wa.me/584126855494?text=" + encodeURIComponent(textMsg);
+        
+        // Abrir WhatsApp automáticamente
+        setTimeout(function(){
+          window.open(waUrl, '_blank');
+        }, 1000);
+  
 
 function showConfirmation(){
   var details = document.getElementById('detailsForm');
