@@ -801,12 +801,14 @@ function submitBooking(){
                       "⏰ *Hora:* " + formatTime12h(state.slot) + "\n" +
                       "💳 *Pago:* " + state.payment.name + (state.reference ? " (Ref: " + state.reference + ")" : "");
 
-        var waUrl = "https://wa.me/584126855494?text=" + encodeURIComponent(textMsg);
+          var waUrl = "https://wa.me/584126855494?text=" + encodeURIComponent(textMsg);
+
         
         // Abrir WhatsApp automáticamente
         setTimeout(function(){
           window.open(waUrl, '_blank');
         }, 1000);
+  }
   
 
 function showConfirmation(){
