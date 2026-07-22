@@ -161,6 +161,8 @@
   .slot-btn[disabled]{ opacity:0.3; text-decoration:line-through; cursor:not-allowed; }
   .slot-btn[aria-pressed="true"]{ background:var(--green); color:var(--paper); border-color:var(--green); }
 
+  .empty-hint{ color:var(--ink-soft); font-style:italic; font-size:0.92rem; }
+
   .form-row{ display:grid; gap:1.2rem; max-width:520px; }
   .field{ display:flex; flex-direction:column; gap:0.35rem; }
   .field label{ font-size:0.78rem; font-weight:700; }
@@ -226,12 +228,36 @@
 </head>
 <body>
 
+<div id="debugErrorBox" style="display:none; position:fixed; top:0; left:0; right:0; z-index:999; background:#a13327; color:#fff; padding:0.9rem 1rem; font-family:monospace; font-size:0.72rem; white-space:pre-wrap; max-height:45vh; overflow:auto;"></div>
+<script>
+(function(){
+  function showErr(msg){
+    var box = document.getElementById('debugErrorBox');
+    if(!box) return;
+    box.style.display = 'block';
+    box.textContent += (box.textContent ? '\n---\n' : 'ERROR DETECTADO:\n') + msg;
+  }
+  window.addEventListener('error', function(e){
+    showErr((e.message || 'Error desconocido') + ' — archivo: ' + (e.filename || '?') + ':' + (e.lineno || '?'));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var reason = e.reason && e.reason.message ? e.reason.message : e.reason;
+    showErr('Promesa no manejada: ' + reason);
+  });
+})();
+</script>
+
+<!-- CARGA DE LIBRERÍAS DE FIREBASE COMPAT (Sintaxis clásica universal) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
 <header class="site-header">
   <div class="brand-mark"><span class="mark">JR</span> Barbería JR</div>
-  <button class="header-cta" id="ctaBtn">Reservar turno</button>
+  <button class="header-cta" onclick="document.getElementById('reservar').scrollIntoView()">Reservar turno</button>
 </header>
 
 <main>
+
   <section class="hero" aria-labelledby="hero-title">
     <h1 id="hero-title">Tu turno, confirmado en menos de un minuto.</h1>
     <p>Reservá con el barbero de tu confianza, elegí el horario exacto que te acomoda y recibí la confirmación al instante. Sin llamadas, sin esperas.</p>
@@ -266,7 +292,7 @@
       <div class="option-grid" id="serviceGrid" role="group" aria-label="Servicios disponibles"></div>
       <div class="wizard-nav">
         <span></span>
-        <button class="btn btn-primary" id="toStep2" disabled>Continuar</button>
+        <button class="btn btn-primary" id="toStep2" disabled onclick="goToStep(2)">Continuar</button>
       </div>
     </div>
 
@@ -274,8 +300,8 @@
       <span class="field-label">Elegí a tu profesional</span>
       <div class="barber-grid" id="barberGrid" role="group" aria-label="Profesionales disponibles"></div>
       <div class="wizard-nav">
-        <button class="btn btn-outline" id="backStep1">Atrás</button>
-        <button class="btn btn-primary" id="toStep3" disabled>Continuar</button>
+        <button class="btn btn-outline" onclick="goToStep(1)">Atrás</button>
+        <button class="btn btn-primary" id="toStep3" disabled onclick="goToStep(3)">Continuar</button>
       </div>
     </div>
 
@@ -286,8 +312,8 @@
       <span class="field-label">Elegí el horario</span>
       <div class="slot-grid" id="slotGrid" role="group" aria-label="Horarios disponibles"></div>
       <div class="wizard-nav">
-        <button class="btn btn-outline" id="backStep2">Atrás</button>
-        <button class="btn btn-primary" id="toStep4" disabled>Continuar</button>
+        <button class="btn btn-outline" onclick="goToStep(2)">Atrás</button>
+        <button class="btn btn-primary" id="toStep4" disabled onclick="goToStep(4)">Continuar</button>
       </div>
     </div>
 
@@ -304,8 +330,8 @@
       </div>
 
       <div class="wizard-nav">
-        <button class="btn btn-outline" id="backStep3">Atrás</button>
-        <button class="btn btn-primary" id="toStep5" disabled>Continuar</button>
+        <button class="btn btn-outline" onclick="goToStep(3)">Atrás</button>
+        <button class="btn btn-primary" id="toStep5" disabled onclick="handlePaymentContinue()">Continuar</button>
       </div>
     </div>
 
@@ -328,8 +354,8 @@
         <div class="summary-card" id="summaryCard"></div>
 
         <div class="wizard-nav">
-          <button class="btn btn-outline" id="backStep4">Atrás</button>
-          <button class="btn btn-primary" id="submitBookingBtn">Confirmar reserva</button>
+          <button class="btn btn-outline" onclick="goToStep(4)">Atrás</button>
+          <button class="btn btn-primary" onclick="submitBooking()">Confirmar reserva</button>
         </div>
       </div>
 
@@ -338,7 +364,7 @@
           <div class="check">&#10003;</div>
           <h3>Reserva confirmada</h3>
           <p id="confirmationText"></p>
-          <button class="btn btn-primary" id="resetWizardBtn">Reservar otro turno</button>
+          <button class="btn btn-primary" onclick="resetWizard()">Reservar otro turno</button>
         </div>
       </div>
     </div>
@@ -347,121 +373,73 @@
   <section id="citas" aria-labelledby="citas-title">
     <p class="eyebrow">Historial de citas</p>
     <h2 class="section-title" id="citas-title">Citas reservadas</h2>
-    <p class="section-sub">Las reservas se actualizan en tiempo real y quedan sincronizadas en la nube.</p>
-    <div class="sync-note"><span class="sync-dot" id="syncDot"></span><span id="syncText">Sincronizando...</span></div>
+    <p class="section-sub">Las reservas se sincronizan automáticamente en tiempo real.</p>
+    <div class="sync-note"><span class="sync-dot" id="syncDot"></span><span id="syncText">Conectando...</span></div>
     <div id="apptTableWrap" style="margin-top:1.2rem;"></div>
   </section>
+
 </main>
 
-<footer>Barbería JR — Tus citas se sincronizan automáticamente.</footer>
+<footer>Barbería JR — Citas sincronizadas automáticamente.</footer>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<!-- LIBRERÍAS DE FIREBASE VÍA ES MODULES -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getDatabase, ref, set, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+<script>
+/* =========================================================
+   CONFIGURACIÓN DE FIREBASE (Reemplaza con tus datos)
+========================================================= */
+var firebaseConfig = {
+  apiKey: "AIzaSyYOUR_API_KEY",
+  authDomain: "tu-barberia.firebaseapp.com",
+  databaseURL: "https://tu-barberia-default-rtdb.firebaseio.com",
+  projectId: "tu-barberia",
+  storageBucket: "tu-barberia.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abc123def456"
+};
 
-  // Configuración de Firebase (Sustituir por las credenciales de tu consola)
-  const firebaseConfig = {
-    apiKey: "AIzaSyYOUR_API_KEY",
-    authDomain: "tu-barberia.firebaseapp.com",
-    databaseURL: "https://tu-barberia-default-rtdb.firebaseio.com",
-    projectId: "tu-barberia",
-    storageBucket: "tu-barberia.appspot.com",
-    messagingSenderId: "123456789",
-    appId: "1:123456789:web:abc123def456"
-  };
+// Inicialización de Firebase Compat
+var db = null;
+var bookingsRef = null;
+var isFirebaseActive = false;
 
-  // Inicialización de Firebase
-  let db = null;
-  let bookingsRef = null;
-  let isFirebaseActive = false;
-
-  try {
-    const app = initializeApp(firebaseConfig);
-    db = getDatabase(app);
-    bookingsRef = ref(db, 'bookings');
+try {
+  if (typeof firebase !== 'undefined') {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    bookingsRef = db.ref('bookings');
     isFirebaseActive = true;
-  } catch(e) {
-    console.warn("Firebase no se pudo inicializar. Usando localStorage en su lugar:", e);
   }
+} catch(e) {
+  console.warn("Firebase no se pudo inicializar. Usando localStorage:", e);
+}
 
-  /* DATOS BASE */
-  const SERVICES = [
-    { id:'corte',  name:'Corte',              duration:'50 min',    price:'5 €' },
-    { id:'barba',  name:'Arreglo de barba',   duration:'15 min',    price:'2 €' },
-    { id:'combo',  name:'Corte + barba',      duration:'1 h 10 min', price:'7 €' },
-    { id:'nino',   name:'Corte niño',         duration:'1 h',       price:'6 €' }
-  ];
+/* =========================================================
+   DATOS BASE
+========================================================= */
+var SERVICES = [
+  { id:'corte',  name:'Corte',              duration:'50 min',    price:'5 €' },
+  { id:'barba',  name:'Arreglo de barba',   duration:'15 min',    price:'2 €' },
+  { id:'combo',  name:'Corte + barba',      duration:'1 h 10 min', price:'7 €' },
+  { id:'nino',   name:'Corte niño',         duration:'1 h',       price:'6 €' }
+];
 
-  const BARBERS = [
-    { id:'jesuangel', name:'Jesuangel Rodríguez', role:'Cortes, barba y diseño' }
-  ];
+var BARBERS = [
+  { id:'jesuangel', name:'Jesuangel Rodríguez', role:'Cortes, barba y diseño' }
+];
 
-  const PAYMENT_METHODS = [
-    { id:'efectivo', name:'Efectivo',   meta:'Pagás en el local al finalizar' },
-    { id:'movil',    name:'Pago móvil', meta:'Transferencia desde tu banco' }
-  ];
+var PAYMENT_METHODS = [
+  { id:'efectivo', name:'Efectivo',   meta:'Pagás en el local al finalizar' },
+  { id:'movil',    name:'Pago móvil', meta:'Transferencia desde tu banco' }
+];
 
-  const BARBER_MOBILE_PAYMENT = {
-    titular: 'Jesuangel Rodríguez',
-    cedula: 'V-30.948.784',
-    telefono: '0412-685.5494',
-    banco: 'Banco del Tesoro (0163)'
-  };
+var BARBER_MOBILE_PAYMENT = {
+  titular: 'Jesuangel Rodríguez',
+  cedula: 'V-30.948.784',
+  telefono: '0412-685.5494',
+  banco: 'Banco del Tesoro (0163)'
+};
 
-  const SLOT_TIMES = ['09:00','09:45','10:30','11:15','12:00','14:30','15:15','16:00','16:45','17:30','18:15'];
-  const DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
-  const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-
-  function formatTime12h(t){
-    const parts = t.split(':');
-    let h = parseInt(parts[0], 10);
-    const m = parts[1];
-    const suffix = h >= 12 ? 'pm' : 'am';
-    h = h % 12 || 12;
-    return `${h}:${m} ${suffix}`;
-  }
-
-  function pad2(n){ return n < 10 ? '0'+n : ''+n; }
-
-  // Generación de días disponibles (Lunes a Sábado)
-  const dates = [];
-  let offset = 0;
-  while(dates.length < 7){
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    offset++;
-    if(d.getDay() === 0) continue; // Saltar domingos
-    dates.push({
-      dateObj: d,
-      iso: `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`,
-      dayNum: d.getDate(),
-      dayLabel: DAY_NAMES[d.getDay()],
-      monthLabel: MONTH_NAMES[d.getMonth()]
-    });
-  }
-
-  /* ESTADO DE LA RESERVA */
-  let state = {
-    step: 1,
-    service: null,
-    barber: null,
-    dateIndex: null,
-    slot: null,
-    payment: null,
-    reference: '',
-    name: '',
-    phone: ''
-  };
-
-  let bookings = [];
-
-  /* FUNCIONES DE TIEMPO REAL Y LOCALSTORAGE */
-  function loadBookingsLocal() {
-    try {
-      const data = localStorage.getItem('barberiaJR_bookings');
-      bookings = data ? JSON.parse(data) : [];
-    } catch(e) {
-      booking
+var SLOT_TIMES = ['09:00','09:45','10:30','11:15','12:00','14:30','15:15','16:00','16:45','17:30','18:15'];
+var DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+var MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Ju
