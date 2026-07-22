@@ -386,35 +386,6 @@
 
 <script>
 /* =========================================================
-   CONFIGURACIÓN DE FIREBASE (Reemplaza con tus datos)
-========================================================= */
-var firebaseConfig = {
-  apiKey: "AIzaSyYOUR_API_KEY",
-  authDomain: "tu-barberia.firebaseapp.com",
-  databaseURL: "https://tu-barberia-default-rtdb.firebaseio.com",
-  projectId: "tu-barberia",
-  storageBucket: "tu-barberia.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abc123def456"
-};
-
-// Inicialización de Firebase Compat
-var db = null;
-var bookingsRef = null;
-var isFirebaseActive = false;
-
-try {
-  if (typeof firebase !== 'undefined') {
-    firebase.initializeApp(firebaseConfig);
-    db = firebase.database();
-    bookingsRef = db.ref('bookings');
-    isFirebaseActive = true;
-  }
-} catch(e) {
-  console.warn("Firebase no se pudo inicializar. Usando localStorage:", e);
-}
-
-/* =========================================================
    DATOS BASE
 ========================================================= */
 var SERVICES = [
@@ -442,4 +413,509 @@ var BARBER_MOBILE_PAYMENT = {
 
 var SLOT_TIMES = ['09:00','09:45','10:30','11:15','12:00','14:30','15:15','16:00','16:45','17:30','18:15'];
 var DAY_NAMES = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
-var MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Ju
+var MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function formatTime12h(t){
+  var parts = t.split(':');
+  var h = parseInt(parts[0], 10);
+  var m = parts[1];
+  var suffix = h >= 12 ? 'pm' : 'am';
+  h = h % 12;
+  if(h === 0) h = 12;
+  return h + ':' + m + ' ' + suffix;
+}
+
+function pad2(n){ return n < 10 ? '0'+n : ''+n; }
+
+var dates = [];
+(function buildDates(){
+  var offset = 0;
+  while(dates.length < 7){
+    var d = new Date();
+    d.setDate(d.getDate() + offset);
+    offset++;
+    if(d.getDay() === 0) continue;
+    dates.push({
+      dateObj: d,
+      iso: d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()),
+      dayNum: d.getDate(),
+      dayLabel: DAY_NAMES[d.getDay()],
+      monthLabel: MONTH_NAMES[d.getMonth()]
+    });
+  }
+})();
+
+var state = {
+  step: 1,
+  service: null,
+  barber: null,
+  dateIndex: null,
+  slot: null,
+  payment: null,
+  reference: '',
+  name: '',
+  phone: ''
+};
+
+var bookings = [];
+
+/* =========================================================
+   CONFIGURACIÓN DE FIREBASE (Opcional)
+========================================================= */
+var firebaseConfig = {
+  apiKey: "AIzaSyYOUR_API_KEY",
+  authDomain: "tu-barberia.firebaseapp.com",
+  databaseURL: "https://tu-barberia-default-rtdb.firebaseio.com",
+  projectId: "tu-barberia",
+  storageBucket: "tu-barberia.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abc123def456"
+};
+
+var db = null;
+var bookingsRef = null;
+var isFirebaseActive = false;
+
+function loadBookingsLocal(){
+  try {
+    var data = localStorage.getItem('barberiaJR_bookings');
+    bookings = data ? JSON.parse(data) : [];
+  } catch(e){ bookings = []; }
+  renderSlots();
+  renderBookingsTable();
+}
+
+function saveBookingsLocal(){
+  try {
+    localStorage.setItem('barberiaJR_bookings', JSON.stringify(bookings));
+  } catch(e){}
+}
+
+function initSync(){
+  var syncDot = document.getElementById('syncDot');
+  var syncText = document.getElementById('syncText');
+
+  if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== "AIzaSyYOUR_API_KEY") {
+    try {
+      if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      db = firebase.database();
+      bookingsRef = db.ref('bookings');
+      isFirebaseActive = true;
+
+      bookingsRef.on('value', function(snapshot){
+        var data = snapshot.val();
+        bookings = [];
+        if(data){
+          Object.keys(data).forEach(function(key){
+            var item = data[key];
+            item.id = key;
+            bookings.push(item);
+          });
+        }
+        saveBookingsLocal();
+        renderSlots();
+        renderBookingsTable();
+        if(syncDot) syncDot.style.background = '#38523f';
+        if(syncText) syncText.textContent = 'Sincronizado en tiempo real';
+      }, function(err){
+        fallbackLocal('Error de conexión a Firebase');
+      });
+    } catch(e) {
+      fallbackLocal('Modo local activo');
+    }
+  } else {
+    fallbackLocal('Almacenamiento en dispositivo listo');
+  }
+
+  function fallbackLocal(msg) {
+    if(syncDot) syncDot.style.background = '#a9843d';
+    if(syncText) syncText.textContent = msg;
+    loadBookingsLocal();
+  }
+}
+
+/* =========================================================
+   INTERFAZ Y NAVEGACIÓN
+========================================================= */
+function renderServices(){
+  var preview = document.getElementById('servicesPreview');
+  var grid = document.getElementById('serviceGrid');
+  var html = '';
+
+  SERVICES.forEach(function(s){
+    html += '<div class="option-card" data-service-id="' + s.id + '" role="button" aria-pressed="false" onclick="selectService(\'' + s.id + '\')">' +
+            '<h4>' + s.name + '</h4>' +
+            '<div class="meta">' + s.duration + '</div>' +
+            '<div class="price">' + s.price + '</div>' +
+            '</div>';
+  });
+
+  if(preview) preview.innerHTML = html;
+  if(grid) grid.innerHTML = html;
+}
+
+function selectService(id){
+  state.service = SERVICES.find(function(x){ return x.id === id; });
+  var cards = document.querySelectorAll('#serviceGrid .option-card');
+  cards.forEach(function(c){
+    c.setAttribute('aria-pressed', c.getAttribute('data-service-id') === id ? 'true' : 'false');
+  });
+  document.getElementById('toStep2').disabled = false;
+}
+
+function renderBarbers(){
+  var grid = document.getElementById('barberGrid');
+  var html = '';
+
+  BARBERS.forEach(function(b){
+    html += '<div class="barber-card" data-barber-id="' + b.id + '" role="button" aria-pressed="false" onclick="selectBarber(\'' + b.id + '\')">' +
+            '<div class="avatar">' + b.name.charAt(0) + '</div>' +
+            '<div><strong>' + b.name + '</strong><span class="role">' + b.role + '</span></div>' +
+            '</div>';
+  });
+
+  if(grid) grid.innerHTML = html;
+}
+
+function selectBarber(id){
+  state.barber = BARBERS.find(function(x){ return x.id === id; });
+  var cards = document.querySelectorAll('#barberGrid .barber-card');
+  cards.forEach(function(c){
+    c.setAttribute('aria-pressed', c.getAttribute('data-barber-id') === id ? 'true' : 'false');
+  });
+  document.getElementById('toStep3').disabled = false;
+}
+
+function renderDates(){
+  var scroll = document.getElementById('dateScroll');
+  var html = '';
+
+  dates.forEach(function(d, idx){
+    html += '<div class="date-btn" data-date-idx="' + idx + '" role="button" aria-pressed="false" onclick="selectDate(' + idx + ')">' +
+            '<span class="dn">' + d.dayNum + '</span>' +
+            '<span class="dl">' + d.dayLabel + ' ' + d.monthLabel + '</span>' +
+            '</div>';
+  });
+
+  if(scroll) scroll.innerHTML = html;
+}
+
+function selectDate(idx){
+  state.dateIndex = idx;
+  state.slot = null;
+  var btns = document.querySelectorAll('#dateScroll .date-btn');
+  btns.forEach(function(b){
+    b.setAttribute('aria-pressed', parseInt(b.getAttribute('data-date-idx'), 10) === idx ? 'true' : 'false');
+  });
+  document.getElementById('toStep4').disabled = true;
+  renderSlots();
+}
+
+function renderSlots(){
+  var grid = document.getElementById('slotGrid');
+  if(!grid) return;
+
+  if(state.dateIndex === null){
+    grid.innerHTML = '<span class="empty-hint">Seleccioná un día primero.</span>';
+    return;
+  }
+
+  var selectedDateISO = dates[state.dateIndex].iso;
+  var html = '';
+
+  SLOT_TIMES.forEach(function(time){
+    var isTaken = bookings.some(function(b){ return b.dateISO === selectedDateISO && b.slot === time; });
+    var isSelected = state.slot === time;
+
+    html += '<button class="slot-btn" data-time="' + time + '" ' + (isTaken ? 'disabled' : '') + 
+            ' aria-pressed="' + (isSelected ? 'true' : 'false') + '" onclick="selectSlot(\'' + time + '\')">' +
+            formatTime12h(time) +
+            '</button>';
+  });
+
+  grid.innerHTML = html;
+}
+
+function selectSlot(time){
+  state.slot = time;
+  var btns = document.querySelectorAll('#slotGrid .slot-btn');
+  btns.forEach(function(b){
+    b.setAttribute('aria-pressed', b.getAttribute('data-time') === time ? 'true' : 'false');
+  });
+  document.getElementById('toStep4').disabled = false;
+}
+
+function renderPayments(){
+  var grid = document.getElementById('paymentGrid');
+  var html = '';
+
+  PAYMENT_METHODS.forEach(function(p){
+    html += '<div class="option-card" data-payment-id="' + p.id + '" role="button" aria-pressed="false" onclick="selectPayment(\'' + p.id + '\')">' +
+            '<h4>' + p.name + '</h4>' +
+            '<div class="meta">' + p.meta + '</div>' +
+            '</div>';
+  });
+
+  if(grid) grid.innerHTML = html;
+
+  var infoBox = document.getElementById('mobilePaymentInfo');
+  if(infoBox){
+    infoBox.innerHTML = '<div class="summary-row"><span class="k">Titular</span><span class="v">' + BARBER_MOBILE_PAYMENT.titular + '</span></div>' +
+                        '<div class="summary-row"><span class="k">Cédula</span><span class="v">' + BARBER_MOBILE_PAYMENT.cedula + '</span></div>' +
+                        '<div class="summary-row"><span class="k">Teléfono</span><span class="v">' + BARBER_MOBILE_PAYMENT.telefono + '</span></div>' +
+                        '<div class="summary-row"><span class="k">Banco</span><span class="v">' + BARBER_MOBILE_PAYMENT.banco + '</span></div>';
+  }
+}
+
+function selectPayment(id){
+  state.payment = PAYMENT_METHODS.find(function(x){ return x.id === id; });
+  var cards = document.querySelectorAll('#paymentGrid .option-card');
+  cards.forEach(function(c){
+    c.setAttribute('aria-pressed', c.getAttribute('data-payment-id') === id ? 'true' : 'false');
+  });
+
+  var infoBox = document.getElementById('mobilePaymentInfo');
+  var refBox = document.getElementById('fieldReference');
+
+  if(id === 'movil'){
+    if(infoBox) infoBox.style.display = 'block';
+    if(refBox) refBox.style.display = 'flex';
+  } else {
+    if(infoBox) infoBox.style.display = 'none';
+    if(refBox) refBox.style.display = 'none';
+  }
+
+  document.getElementById('toStep5').disabled = false;
+}
+
+function handlePaymentContinue(){
+  if(state.payment && state.payment.id === 'movil'){
+    var refInput = document.getElementById('referenceInput');
+    var fieldRef = document.getElementById('fieldReference');
+    if(!refInput.value.trim()){
+      if(fieldRef) fieldRef.classList.add('invalid');
+      return;
+    }
+    if(fieldRef) fieldRef.classList.remove('invalid');
+    state.reference = refInput.value.trim();
+  }
+  goToStep(5);
+}
+
+function renderSummary(){
+  var card = document.getElementById('summaryCard');
+  if(!card) return;
+  var selectedDate = dates[state.dateIndex];
+
+  card.innerHTML = '<div class="summary-row"><span class="k">Servicio</span><span class="v">' + (state.service ? state.service.name + ' (' + state.service.price + ')' : '') + '</span></div>' +
+                   '<div class="summary-row"><span class="k">Profesional</span><span class="v">' + (state.barber ? state.barber.name : '') + '</span></div>' +
+                   '<div class="summary-row"><span class="k">Fecha</span><span class="v">' + (selectedDate ? selectedDate.dayLabel + ' ' + selectedDate.dayNum + ' ' + selectedDate.monthLabel : '') + '</span></div>' +
+                   '<div class="summary-row"><span class="k">Horario</span><span class="v">' + (state.slot ? formatTime12h(state.slot) : '') + '</span></div>' +
+                   '<div class="summary-row"><span class="k">Método de pago</span><span class="v">' + (state.payment ? state.payment.name : '') + '</span></div>' +
+                   (state.payment && state.payment.id === 'movil' ? '<div class="summary-row"><span class="k">Referencia</span><span class="v">' + state.reference + '</span></div>' : '');
+}
+
+function goToStep(stepNum){
+  state.step = stepNum;
+
+  var steps = document.querySelectorAll('#wizardSteps li');
+  steps.forEach(function(li){
+    var s = parseInt(li.getAttribute('data-step'), 10);
+    li.classList.remove('current', 'done');
+    if(s === stepNum) li.classList.add('current');
+    if(s < stepNum) li.classList.add('done');
+  });
+
+  var panels = document.querySelectorAll('.wizard-panel');
+  panels.forEach(function(p){
+    var panNum = parseInt(p.getAttribute('data-panel'), 10);
+    if(panNum === stepNum) p.classList.add('active');
+    else p.classList.remove('active');
+  });
+
+  if(stepNum === 5) renderSummary();
+}
+
+function submitBooking(){
+  var nameInput = document.getElementById('nameInput');
+  var phoneInput = document.getElementById('phoneInput');
+  var fieldName = document.getElementById('fieldName');
+  var fieldPhone = document.getElementById('fieldPhone');
+
+  var isValid = true;
+  if(fieldName) fieldName.classList.remove('invalid');
+  if(fieldPhone) fieldPhone.classList.remove('invalid');
+
+  if(!nameInput.value.trim()){
+    if(fieldName) fieldName.classList.add('invalid');
+    isValid = false;
+  }
+
+  if(!phoneInput.value.trim() || phoneInput.value.trim().length < 7){
+    if(fieldPhone) fieldPhone.classList.add('invalid');
+    isValid = false;
+  }
+
+  if(!isValid) return;
+
+  state.name = nameInput.value.trim();
+  state.phone = phoneInput.value.trim();
+
+  var newBooking = {
+    dateISO: dates[state.dateIndex].iso,
+    slot: state.slot,
+    serviceId: state.service.id,
+    serviceName: state.service.name,
+    price: state.service.price,
+    barberName: state.barber.name,
+    paymentId: state.payment.id,
+    paymentName: state.payment.name,
+    reference: state.reference,
+    name: state.name,
+    phone: state.phone,
+    createdAt: new Date().toISOString()
+  };
+
+  if(isFirebaseActive && bookingsRef){
+    bookingsRef.push(newBooking).then(function(){
+      showConfirmation();
+    }).catch(function(err){
+      newBooking.id = 'local_' + Date.now();
+      bookings.push(newBooking);
+      saveBookingsLocal();
+      renderSlots();
+      renderBookingsTable();
+      showConfirmation();
+    });
+  } else {
+    newBooking.id = 'local_' + Date.now();
+    bookings.push(newBooking);
+    saveBookingsLocal();
+    renderSlots();
+    renderBookingsTable();
+    showConfirmation();
+  }
+}
+
+function showConfirmation(){
+  var details = document.getElementById('detailsForm');
+  var confBlock = document.getElementById('confirmationBlock');
+  var confText = document.getElementById('confirmationText');
+  var selectedDate = dates[state.dateIndex];
+
+  if(details) details.style.display = 'none';
+  if(confText){
+    confText.innerHTML = '¡Gracias, <strong>' + state.name + '</strong>! Tu cita para <strong>' + state.service.name + 
+                          '</strong> quedó agendada el día <strong>' + selectedDate.dayLabel + ' ' + selectedDate.dayNum + 
+                          ' de ' + selectedDate.monthLabel + '</strong> a las <strong>' + formatTime12h(state.slot) + 
+                          '</strong> con ' + state.barber.name + '.';
+  }
+  if(confBlock) confBlock.style.display = 'block';
+  showToast("¡Reserva confirmada!");
+}
+
+function resetWizard(){
+  state = {
+    step: 1,
+    service: null,
+    barber: null,
+    dateIndex: null,
+    slot: null,
+    payment: null,
+    reference: '',
+    name: '',
+    phone: ''
+  };
+
+  document.getElementById('referenceInput').value = '';
+  document.getElementById('nameInput').value = '';
+  document.getElementById('phoneInput').value = '';
+
+  document.getElementById('detailsForm').style.display = 'block';
+  document.getElementById('confirmationBlock').style.display = 'none';
+
+  document.getElementById('toStep2').disabled = true;
+  document.getElementById('toStep3').disabled = true;
+  document.getElementById('toStep4').disabled = true;
+  document.getElementById('toStep5').disabled = true;
+
+  renderServices();
+  renderBarbers();
+  renderDates();
+  renderPayments();
+
+  goToStep(1);
+}
+
+function renderBookingsTable(){
+  var wrap = document.getElementById('apptTableWrap');
+  if(!wrap) return;
+
+  if(!bookings || bookings.length === 0){
+    wrap.innerHTML = '<p class="empty-hint">No hay reservas registradas por el momento.</p>';
+    return;
+  }
+
+  var sorted = bookings.slice().sort(function(a, b){
+    if(a.dateISO !== b.dateISO) return a.dateISO.localeCompare(b.dateISO);
+    return a.slot.localeCompare(b.slot);
+  });
+
+  var html = '<table class="appt-table"><thead><tr>' +
+             '<th>Cliente</th><th>Servicio</th><th>Fecha y Hora</th><th>Pago</th><th></th>' +
+             '</tr></thead><tbody>';
+
+  sorted.forEach(function(b){
+    var parts = b.dateISO.split('-');
+    var formattedDate = parts[2] + '/' + parts[1] + '/' + parts[0];
+    html += '<tr>' +
+            '<td><strong>' + b.name + '</strong><br><small>' + b.phone + '</small></td>' +
+            '<td>' + b.serviceName + '</td>' +
+            '<td>' + formattedDate + '<br><strong>' + formatTime12h(b.slot) + '</strong></td>' +
+            '<td>' + b.paymentName + (b.reference ? '<br><small>Ref: ' + b.reference + '</small>' : '') + '</td>' +
+            '<td><button class="cancel-btn" onclick="cancelBooking(\'' + b.id + '\')">Cancelar</button></td>' +
+            '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+function cancelBooking(id){
+  if(!confirm("¿Estás seguro de que deseas cancelar este turno?")) return;
+
+  if(isFirebaseActive && db && id && !id.startsWith('local_')){
+    db.ref('bookings/' + id).remove().then(function(){
+      showToast("Reserva cancelada con éxito");
+    });
+  } else {
+    bookings = bookings.filter(function(b){ return b.id !== id; });
+    saveBookingsLocal();
+    renderSlots();
+    renderBookingsTable();
+    showToast("Reserva cancelada con éxito");
+  }
+}
+
+function showToast(msg){
+  var toast = document.getElementById('toast');
+  if(!toast) return;
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(function(){ toast.classList.remove('show'); }, 3000);
+}
+
+/* =========================================================
+   INICIALIZACIÓN INMEDIATA (Render primero, Sync después)
+========================================================= */
+window.addEventListener('DOMContentLoaded', function(){
+  renderServices();
+  renderBarbers();
+  renderDates();
+  renderPayments();
+  loadBookingsLocal();
+  initSync();
+});
+</script>
+</body>
+</html>
