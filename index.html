@@ -761,7 +761,8 @@ function submitBooking(){
 
   state.name = nameInput.value.trim();
   state.phone = phoneInput.value.trim();
-
+  var selectedDate = dates[state.dateIndex];
+  
   var newBooking = {
     dateISO: dates[state.dateIndex].iso,
     slot: state.slot,
